@@ -1,13 +1,13 @@
 # QMD - Query Markdown
 
-A containerized MCP (Model Context Protocol) server that provides hybrid search over your local markdown knowledge base. Works with Claude Code, Claude Desktop, Cursor, and other MCP-compatible agents.
+A containerized MCP (Model Context Protocol) server that provides hybrid search over your local markdown knowledge base. Works with Claude Code, Claude Desktop, Cursor, Qwen Code, and other MCP-compatible agents.
 
 ## Features
 
 - **Dual-mode communication**: STDIO for local agents (Claude Code), HTTP/SSE for remote agents
 - **Stateless STDIO architecture**: Temporary containers (`docker run --rm`) with persistent volume storage
 - **Hybrid search**: Combines BM25 keyword search and vector semantic search with RRF fusion
-- **Vector embeddings**: OpenRouter API for high-quality embeddings (text-embedding-3-small)
+- **Flexible embedding providers**: Support for OpenRouter, OpenAI, and OpenAI-compatible APIs (including SiliconFlow, Ollama, etc.)
 - **SQLite persistence**: FTS5 for keyword search, BLOB storage for vectors in named Docker volume
 - **Zero-config deployment**: Automated setup script (`setup-qmd-mcp.sh`) configures everything
 - **No long-running containers**: For STDIO mode, containers auto-remove after each tool call
@@ -27,6 +27,7 @@ A containerized MCP (Model Context Protocol) server that provides hybrid search 
 - **Persistence**: Host directory mount via `.env` configuration
 - **Setup**: Configure `.env` and run `docker compose up -d`
 - **Use case**: Remote agents, web services, or when you need HTTP/SSE transport
+- **MCP Compatibility**: Fully supports MCP protocol over HTTP/SSE transport
 
 ## Quick Start
 
@@ -239,6 +240,16 @@ docker volume rm qmd-cache
 | `qmd_refresh_index` | Trigger ingestion pipeline for new/modified files |
 | `qmd_get` | Retrieve full content of a specific file |
 | `qmd_list` | List all indexed files in the knowledge base |
+
+## MCP Protocol Compatibility
+
+QMD fully supports the Model Context Protocol (MCP) and can be used with any MCP-compatible client, including:
+- Claude Code/DeskTop
+- Cursor
+- Qwen Code
+- And other MCP-enabled AI assistants
+
+Supports both STDIO and HTTP/SSE transport modes for maximum flexibility.
 
 ## Usage Examples
 
@@ -553,11 +564,37 @@ The `qmd-cache` named volume ensures:
 **Subsequent runs:**
 1. Agent calls `qmd_query` → instant results (no re-indexing)
 
+## Embedding Provider Configuration
+
+QMD supports multiple embedding providers through flexible API configuration:
+
+### OpenRouter (Default)
+Set `QMD_EMBEDDING_PROVIDER=openrouter` (default) and provide:
+- `OPENROUTER_API_KEY`: Your OpenRouter API key
+
+### OpenAI
+Set `QMD_EMBEDDING_PROVIDER=openai` and provide:
+- `OPENAI_API_KEY`: Your OpenAI API key
+- `OPENAI_BASE_URL`: Optional, defaults to `https://api.openai.com/v1`
+
+### OpenAI-Compatible APIs (Including SiliconFlow, Ollama, etc.)
+Set `QMD_EMBEDDING_PROVIDER=custom` and provide:
+- `CUSTOM_API_KEY`: API key for the service
+- `CUSTOM_BASE_URL`: Full base URL for the API endpoint
+- Example for SiliconFlow:
+  - `CUSTOM_API_KEY=your_siliconflow_api_key`
+  - `CUSTOM_BASE_URL=https://api.siliconflow.cn/v1/`
+
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OPENROUTER_API_KEY` | (required) | OpenRouter API key for embeddings |
+| `QMD_EMBEDDING_PROVIDER` | `openrouter` | Provider: `openrouter`, `openai`, or `custom` |
+| `OPENROUTER_API_KEY` | (optional) | OpenRouter API key for embeddings |
+| `OPENAI_API_KEY` | (optional) | OpenAI API key |
+| `CUSTOM_API_KEY` | (optional) | API key for custom OpenAI-compatible service |
+| `CUSTOM_BASE_URL` | (optional) | Base URL for custom OpenAI-compatible service |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI API base URL |
 | `QMD_EMBEDDING_MODEL` | `openai/text-embedding-3-small` | Embedding model to use |
 | `MCP_TRANSPORT` | `stdio` | Transport mode: `stdio` or `http` |
 | `QMD_PORT` | `3000` | HTTP server port |
