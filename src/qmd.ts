@@ -2,6 +2,7 @@
 import { parseArgs } from "util";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -27,6 +28,9 @@ const { values, positionals } = parseArgs({
 
 const command = positionals[0] || "mcp";
 const KB_PATH = process.env.QMD_KB_PATH || "/app/kb";
+
+// Map to store active SSE transports by session ID
+const activeTransports = new Map();
 
 // MCP Server instance
 function createMcpServer() {
@@ -389,33 +393,112 @@ async function startHttpServer(port: number) {
   console.error(`Knowledge base: ${KB_PATH}`);
   console.error(`Database: ${DB_PATH}`);
 
-  const server = Bun.serve({
-    port,
-    fetch(req) {
-      const url = new URL(req.url);
-      if (url.pathname === "/health") {
-        const stats = getStats();
-        return new Response(
-          JSON.stringify({
-            status: "ok",
-            mode: "http",
-            documents: stats.documents,
-            chunks: stats.chunks,
-            embeddings: isEmbeddingsEnabled(),
-          }),
-          {
-            headers: { "Content-Type": "application/json" },
-          }
-        );
-      }
-      return new Response(
-        "QMD MCP Server - Use STDIO mode for full functionality",
-        { status: 200 }
-      );
-    },
+  // Import express app creation function
+  const { createMcpExpressApp } = await import('@modelcontextprotocol/sdk/server/express.js');
+  const express = (await import('express')).default;
+  
+  // Create Express application with MCP support
+  const app = createMcpExpressApp();
+  const server = createMcpServer();
+  
+  // Store transports by session ID
+  const transports = {};
+
+  // Health check endpoint
+  app.get('/health', (req, res) => {
+    const stats = getStats();
+    res.json({
+      status: "ok",
+      mode: "http",
+      documents: stats.documents,
+      chunks: stats.chunks,
+      embeddings: isEmbeddingsEnabled(),
+    });
   });
 
-  console.error(`HTTP server listening on http://localhost:${server.port}`);
+  //=============================================================================
+  // HTTP+SSE TRANSPORT (PROTOCOL VERSION 2024-11-05)
+  //=============================================================================
+  app.get('/mcp', async (req, res) => {
+    console.log('Received GET request to /mcp (SSE transport)');
+    
+    // Check if this is an authentication request
+    const authHeader = req.headers.authorization || req.headers.Authorization;
+    if (authHeader && typeof authHeader === 'string' && !authHeader.startsWith('Bearer ' + process.env.QMD_API_KEY)) {
+      res.status(401).send('Unauthorized');
+      return;
+    }
+    
+    // Create a new server instance for this session
+    const sessionServer = createMcpServer();
+    
+    const transport = new SSEServerTransport('/mcp', res, {
+      enableDnsRebindingProtection: false
+    });
+    
+    transports[transport.sessionId] = transport;
+    
+    res.on('close', () => {
+      delete transports[transport.sessionId];
+    });
+    
+    await sessionServer.connect(transport);
+  });
+
+  app.post('/mcp', async (req, res) => {
+    // Check authentication
+    const authHeader = req.headers.authorization || req.headers.Authorization;
+    if (authHeader && typeof authHeader === 'string' && !authHeader.startsWith('Bearer ' + process.env.QMD_API_KEY)) {
+      res.status(401).json({
+        jsonrpc: '2.0',
+        error: { code: -32000, message: 'Unauthorized' },
+        id: null
+      });
+      return;
+    }
+    
+    const sessionId = req.query.sessionId;
+    const existingTransport = transports[sessionId];
+    
+    if (existingTransport instanceof SSEServerTransport) {
+      // Reuse existing transport
+      await existingTransport.handlePostMessage(req, res, req.body);
+    } else {
+      // Transport exists but is not a SSEServerTransport
+      res.status(400).json({
+        jsonrpc: '2.0',
+        error: {
+          code: -32000,
+          message: 'Bad Request: Session exists but uses a different transport protocol'
+        },
+        id: null
+      });
+    }
+  });
+
+  // Start the server
+  app.listen(port, () => {
+    console.log(`QMD MCP server listening on port ${port}`);
+    console.log(`SSE endpoint: GET /mcp (to establish stream)`);
+    console.log(`Messages endpoint: POST /mcp?sessionId=<id> (to send messages)`);
+  });
+
+  // Handle server shutdown
+  process.on('SIGINT', async () => {
+    console.log('Shutting down server...');
+    // Close all active transports to properly clean up resources
+    for (const sessionId in transports) {
+      try {
+        console.log(`Closing transport for session ${sessionId}`);
+        await transports[sessionId].close();
+        delete transports[sessionId];
+      } catch (error) {
+        console.error(`Error closing transport for session ${sessionId}:`, error);
+      }
+    }
+    console.log('Server shutdown complete');
+    process.exit(0);
+  });
 }
 
 async function runIngestionCommand() {
