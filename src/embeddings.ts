@@ -1,26 +1,35 @@
 import OpenAI from "openai";
 
-// Configuration
+// Configuration - support OpenAI-compatible API endpoints
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
 const EMBEDDING_MODEL =
   process.env.QMD_EMBEDDING_MODEL || "openai/text-embedding-3-small";
 
+// Determine which API key to use (prioritizing OPENAI_API_KEY if available, otherwise OPENROUTER_API_KEY)
+const API_KEY = OPENAI_API_KEY || OPENROUTER_API_KEY;
+// Determine base URL based on environment
+const BASE_URL = OPENAI_API_KEY ? OPENAI_BASE_URL : "https://openrouter.ai/api/v1";
+
 // Validate API key
-if (!OPENROUTER_API_KEY) {
+if (!API_KEY) {
   console.error(
-    "Warning: OPENROUTER_API_KEY not set. Embeddings will not be generated."
+    "Warning: No API key set (either OPENAI_API_KEY or OPENROUTER_API_KEY). Embeddings will not be generated."
   );
 }
 
-// OpenRouter client (OpenAI-compatible API)
-const client = OPENROUTER_API_KEY
+// OpenAI-compatible client (supporting OpenAI, OpenRouter, and custom endpoints)
+const client = API_KEY
   ? new OpenAI({
-      baseURL: "https://openrouter.ai/api/v1",
-      apiKey: OPENROUTER_API_KEY,
-      defaultHeaders: {
-        "HTTP-Referer": "https://github.com/qmd",
-        "X-Title": "QMD Knowledge Base",
-      },
+      apiKey: API_KEY,
+      baseURL: BASE_URL,
+      ...(OPENROUTER_API_KEY && !OPENAI_API_KEY && {
+        defaultHeaders: {
+          "HTTP-Referer": "https://github.com/qmd",
+          "X-Title": "QMD Knowledge Base",
+        },
+      }),
     })
   : null;
 
