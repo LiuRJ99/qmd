@@ -393,12 +393,13 @@ async function startHttpServer(port: number) {
   console.error(`Knowledge base: ${KB_PATH}`);
   console.error(`Database: ${DB_PATH}`);
 
-  // Import express app creation function
-  const { createMcpExpressApp } = await import('@modelcontextprotocol/sdk/server/express.js');
+  // Import express
   const express = (await import('express')).default;
   
-  // Create Express application with MCP support
-  const app = createMcpExpressApp();
+  // Create standard Express application (not createMcpExpressApp)
+  const app = express();
+  app.use(express.json());
+  
   const server = createMcpServer();
   
   // Store transports by session ID
