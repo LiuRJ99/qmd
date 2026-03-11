@@ -422,27 +422,37 @@ async function startHttpServer(port: number) {
   //=============================================================================
   app.get('/mcp', async (req, res) => {
     console.log('Received GET request to /mcp (SSE transport)');
-    
+
     // Check if this is an authentication request
     const authHeader = req.headers.authorization || req.headers.Authorization;
     if (authHeader && typeof authHeader === 'string' && !authHeader.startsWith('Bearer ' + process.env.QMD_API_KEY)) {
       res.status(401).send('Unauthorized');
       return;
     }
-    
+
     // Create a new server instance for this session
     const sessionServer = createMcpServer();
-    
+
     const transport = new SSEServerTransport('/mcp', res, {
       enableDnsRebindingProtection: false
     });
-    
+
     transports[transport.sessionId] = transport;
-    
+
+    // Heartbeat: send SSE comment every 20 seconds to prevent idle timeout
+    const heartbeatInterval = setInterval(() => {
+      if (res.writableEnded) {
+        clearInterval(heartbeatInterval);
+        return;
+      }
+      res.write(': heartbeat\n\n');
+    }, 20000);
+
     res.on('close', () => {
+      clearInterval(heartbeatInterval);
       delete transports[transport.sessionId];
     });
-    
+
     await sessionServer.connect(transport);
   });
 
@@ -478,11 +488,16 @@ async function startHttpServer(port: number) {
   });
 
   // Start the server
-  app.listen(port, () => {
+  const httpServer = app.listen(port, () => {
     console.log(`QMD MCP server listening on port ${port}`);
     console.log(`SSE endpoint: GET /mcp (to establish stream)`);
     console.log(`Messages endpoint: POST /mcp?sessionId=<id> (to send messages)`);
   });
+
+  // Disable HTTP timeout to prevent SSE connection from being closed
+  httpServer.timeout = 0;
+  httpServer.keepAliveTimeout = 0;
+  httpServer.headersTimeout = 0;
 
   // Handle server shutdown
   process.on('SIGINT', async () => {
